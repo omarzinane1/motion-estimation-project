@@ -108,3 +108,18 @@ notebooks/01_dataset_exploration.ipynb
 ## État actuel
 
 La structure du projet est prête. Les notebooks et les modules Python contiennent seulement des squelettes de départ. Les algorithmes seront ajoutés progressivement dans les prochaines étapes.
+
+## Interface Tkinter
+
+Pour lancer l'interface :
+
+```bash
+python app/tkinter_app.py
+```
+
+Utilisation :
+
+1. Entrer la frame de départ.
+2. Entrer la frame de fin.
+3. Cliquer sur "Lancer le tracking".
+4. Consulter la trajectoire, les statistiques, la vitesse et la direction.
