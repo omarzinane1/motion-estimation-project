@@ -41,6 +41,67 @@ def filter_valid_flow(points_old, points_new, status):
     return old[valid].reshape(-1, 1, 2), new[valid].reshape(-1, 1, 2)
 
 
+def filter_tracked_points(
+    points_old,
+    points_new,
+    status,
+    previous_center=None,
+    max_point_displacement=25,
+    max_distance_to_center=60
+):
+    """
+    Filtre les points suivis par Lucas-Kanade.
+
+    Nous gardons seulement :
+    - les points validés par Lucas-Kanade ;
+    - les points avec un déplacement raisonnable ;
+    - les points proches du centre précédent de la voiture.
+    """
+
+    if points_old is None or points_new is None or status is None:
+        return (
+            np.empty((0, 2), dtype=np.float32),
+            np.empty((0, 2), dtype=np.float32)
+        )
+
+    points_old = np.asarray(points_old, dtype=np.float32).reshape(-1, 2)
+    points_new = np.asarray(points_new, dtype=np.float32).reshape(-1, 2)
+    status = np.asarray(status).reshape(-1)
+
+    valid_mask = status == 1
+
+    good_old = points_old[valid_mask]
+    good_new = points_new[valid_mask]
+
+    if len(good_new) == 0:
+        return (
+            np.empty((0, 2), dtype=np.float32),
+            np.empty((0, 2), dtype=np.float32)
+        )
+
+    displacements = np.linalg.norm(good_new - good_old, axis=1)
+    displacement_mask = displacements <= max_point_displacement
+
+    good_old = good_old[displacement_mask]
+    good_new = good_new[displacement_mask]
+
+    if len(good_new) == 0:
+        return (
+            np.empty((0, 2), dtype=np.float32),
+            np.empty((0, 2), dtype=np.float32)
+        )
+
+    if previous_center is not None:
+        previous_center = np.asarray(previous_center, dtype=np.float32).reshape(1, 2)
+        distances_to_center = np.linalg.norm(good_new - previous_center, axis=1)
+        center_mask = distances_to_center <= max_distance_to_center
+
+        good_old = good_old[center_mask]
+        good_new = good_new[center_mask]
+
+    return good_old, good_new
+
+
 def compute_displacements(points_old, points_new):
     """Retourne dx, dy et distance pour chaque point suivi."""
     old = np.asarray(points_old, dtype=np.float32).reshape(-1, 2)
@@ -65,4 +126,3 @@ def draw_motion_vectors(frame, points_old, points_new):
         cv2.circle(output, start, 3, (0, 255, 0), -1)
         cv2.circle(output, end, 3, (255, 0, 0), -1)
     return output
-
