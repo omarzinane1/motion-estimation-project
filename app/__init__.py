@@ -1,1 +1,2 @@
-"""Interface graphique du projet."""
+"""Interface Tkinter du projet."""
+

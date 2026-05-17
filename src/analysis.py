@@ -1,90 +1,51 @@
-"""Fonctions simples d'analyse du mouvement.
-
-Ce module calcule les déplacements, la distance, la vitesse et la direction à
-partir de la trajectoire de l'objet.
-"""
+from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 
-def compute_displacements(trajectory_df):
-    """Ajouter les colonnes dx et dy."""
-    analysis_df = trajectory_df.copy()
-
-    if analysis_df.empty:
-        analysis_df["dx"] = []
-        analysis_df["dy"] = []
-        return analysis_df
-
-    analysis_df["dx"] = analysis_df["x"].diff().fillna(0)
-    analysis_df["dy"] = analysis_df["y"].diff().fillna(0)
-
-    return analysis_df
+def interpret_direction(dx, dy):
+    """Retourne une interpretation simple de la direction du mouvement."""
+    eps = 1e-6
+    if abs(dx) < eps and abs(dy) < eps:
+        return "mouvement quasi nul"
+    if abs(dx) > 1.5 * abs(dy):
+        return "mouvement vers la droite" if dx > 0 else "mouvement vers la gauche"
+    if abs(dy) > 1.5 * abs(dx):
+        return "mouvement vers le bas" if dy > 0 else "mouvement vers le haut"
+    return "mouvement diagonal"
 
 
-def compute_distance(analysis_df):
-    """Ajouter la colonne distance."""
-    analysis_df = analysis_df.copy()
+def compute_motion_analysis(trajectory_df):
+    """Calcule dx, dy, vitesse en pixels/frame et direction avec atan2."""
+    df = trajectory_df.copy()
+    df["dx"] = df["center_x"].diff().fillna(0.0)
+    df["dy"] = df["center_y"].diff().fillna(0.0)
+    df["distance"] = np.sqrt(df["dx"] ** 2 + df["dy"] ** 2)
+    df["speed_px_frame"] = df["distance"]
+    df["direction_rad"] = np.arctan2(df["dy"], df["dx"])
+    df["direction_deg"] = np.degrees(df["direction_rad"])
+    df["interpretation"] = [interpret_direction(dx, dy) for dx, dy in zip(df["dx"], df["dy"])]
 
-    if analysis_df.empty:
-        analysis_df["distance"] = []
-        return analysis_df
-
-    analysis_df["distance"] = np.sqrt(analysis_df["dx"] ** 2 + analysis_df["dy"] ** 2)
-
-    return analysis_df
-
-
-def compute_speed(analysis_df, fps=30):
-    """Ajouter les vitesses en pixels/frame et pixels/seconde."""
-    analysis_df = analysis_df.copy()
-
-    if analysis_df.empty:
-        analysis_df["speed_px_per_frame"] = []
-        analysis_df["speed_px_per_second"] = []
-        return analysis_df
-
-    analysis_df["speed_px_per_frame"] = analysis_df["distance"]
-    analysis_df["speed_px_per_second"] = analysis_df["distance"] * fps
-
-    return analysis_df
+    columns = [
+        "frame_id",
+        "center_x",
+        "center_y",
+        "dx",
+        "dy",
+        "distance",
+        "speed_px_frame",
+        "direction_rad",
+        "direction_deg",
+        "interpretation",
+    ]
+    return df[columns]
 
 
-def compute_direction(analysis_df):
-    """Ajouter la direction du mouvement en degrés."""
-    analysis_df = analysis_df.copy()
+def save_motion_analysis_csv(df, output_path):
+    """Sauvegarde l'analyse du mouvement."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(output_path, index=False)
+    return df
 
-    if analysis_df.empty:
-        analysis_df["direction_deg"] = []
-        return analysis_df
-
-    direction_rad = np.arctan2(analysis_df["dy"], analysis_df["dx"])
-    analysis_df["direction_deg"] = np.degrees(direction_rad)
-
-    return analysis_df
-
-
-def summarize_motion(analysis_df):
-    """Retourner un résumé numérique du mouvement."""
-    if analysis_df.empty:
-        return {
-            "number_of_frames": 0,
-            "total_distance": 0,
-            "mean_speed": 0,
-            "max_speed": 0,
-            "mean_direction": 0,
-            "total_dx": 0,
-            "total_dy": 0,
-        }
-
-    direction_values = analysis_df["direction_deg"].iloc[1:]
-
-    return {
-        "number_of_frames": int(len(analysis_df)),
-        "total_distance": float(analysis_df["distance"].sum()),
-        "mean_speed": float(analysis_df["speed_px_per_frame"].mean()),
-        "max_speed": float(analysis_df["speed_px_per_frame"].max()),
-        "mean_direction": float(direction_values.mean()) if len(direction_values) > 0 else 0,
-        "total_dx": float(analysis_df["dx"].sum()),
-        "total_dy": float(analysis_df["dy"].sum()),
-    }

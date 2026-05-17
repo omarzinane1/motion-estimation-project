@@ -1,125 +1,138 @@
-# Estimation du mouvement d'un objet unique
+# Projet 1 - Estimation du mouvement d'un objet unique
 
-Projet universitaire de traitement d'image et de vision par ordinateur.
-
-## Sujet du projet
-
-Ce projet porte sur l'estimation du mouvement d'un objet unique dans une séquence d'images. La séquence utilisée pour démarrer le travail se trouve dans le dossier `data/car/car-11`.
+Ce projet traite l'estimation du mouvement d'une voiture dans une sequence d'images. Il est concu pour rester simple, clair et facilement presentable.
 
 ## Objectif
 
-L'objectif est de construire progressivement une chaîne de traitement permettant de :
+Le but est de repondre aux trois points demandes :
 
-- charger et explorer une séquence d'images ;
-- initialiser l'objet à suivre à partir des annotations ;
-- estimer son mouvement entre les frames ;
-- extraire sa trajectoire globale ;
-- analyser sa vitesse et sa direction ;
-- visualiser les résultats obtenus.
+- estimer le champ de mouvement ;
+- extraire la trajectoire globale de l'objet ;
+- analyser la vitesse et la direction du mouvement.
 
-## Méthode choisie
+La voiture est consideree comme un objet rigide. Nous travaillons avec des deplacements entre frames successives, et la vitesse est exprimee en pixels/frame.
 
-La méthode principale du projet sera le flot optique Lucas-Kanade. Cette approche permet de suivre des points caractéristiques entre deux images consécutives et d'estimer leur déplacement.
+## Dataset
 
-Dans ce projet, nous utiliserons Lucas-Kanade pour suivre les points situés sur l'objet d'intérêt, puis nous regrouperons ces déplacements pour obtenir une trajectoire globale.
-
-## Structure du projet
+Le dataset utilise est deja present dans :
 
 ```text
-motion-estimation-project/
+data/car/car-11/
+├── img/
+├── groundtruth.txt
+├── full_occlusion.txt
+└── out_of_view.txt
+```
+
+Le fichier `groundtruth.txt` n'est pas utilise pour suivre l'objet. Il est utilise uniquement pour explorer le dataset, verifier visuellement les annotations et comparer la trajectoire estimee a la fin.
+
+## Methode utilisee
+
+La methode principale est :
+
+1. Pretraitement des images : niveaux de gris, CLAHE et GaussianBlur.
+2. Segmentation dans une ROI manuelle : Otsu ou Adaptive Threshold, morphologie, puis conservation de la plus grande composante.
+3. Detection de points caracteristiques avec `cv2.goodFeaturesToTrack`.
+4. Estimation du champ de mouvement sparse avec Lucas-Kanade pyramidal.
+5. Calcul du centre robuste de l'objet avec la mediane des points suivis.
+6. Analyse de `dx`, `dy`, distance, vitesse en pixels/frame et direction avec `atan2`.
+
+Hypotheses etudiees :
+
+- rigidite : la voiture est consideree comme un objet rigide, donc les points suivis ont un mouvement global coherent ;
+- petits deplacements : Lucas-Kanade fonctionne mieux lorsque le deplacement entre deux frames est faible ;
+- illumination constante : Lucas-Kanade suppose que l'intensite d'un meme point reste presque constante entre deux frames.
+
+## Structure
+
+```text
+motion_estimation_project/
 ├── data/
 │   └── car/
 │       └── car-11/
-│           ├── img/
-│           ├── groundtruth.txt
-│           ├── full_occlusion.txt
-│           └── out_of_view.txt
 ├── notebooks/
 │   ├── 01_dataset_exploration.ipynb
 │   ├── 02_preprocessing.ipynb
-│   ├── 03_object_detection_initialization.ipynb
-│   ├── 04_optical_flow_lucas_kanade.ipynb
+│   ├── 03_segmentation_detection.ipynb
+│   ├── 04_lucas_kanade_motion_field.ipynb
 │   ├── 05_trajectory_extraction.ipynb
 │   ├── 06_speed_direction_analysis.ipynb
-│   └── 07_results_visualization.ipynb
+│   └── 07_final_visualization.ipynb
 ├── src/
-│   ├── __init__.py
-│   ├── preprocessing.py
-│   ├── detection.py
-│   ├── optical_flow.py
-│   ├── trajectory.py
-│   ├── analysis.py
-│   └── visualization.py
+├── app/
 ├── results/
-│   ├── frames_output/
 │   ├── plots/
+│   ├── frames_output/
 │   └── videos/
-├── report/
-│   └── README_report.md
+├── presentation/
 ├── README.md
 ├── requirements.txt
 └── .gitignore
 ```
 
-## Rôle des notebooks
+## Role des notebooks
 
-| Notebook | Rôle |
+| Notebook | Role |
 |---|---|
-| `01_dataset_exploration.ipynb` | Explorer le dataset, les images et les fichiers d'annotations. |
-| `02_preprocessing.ipynb` | Préparer les images avant le suivi. |
-| `03_object_detection_initialization.ipynb` | Initialiser l'objet à suivre avec la boîte englobante de départ. |
-| `04_optical_flow_lucas_kanade.ipynb` | Préparer le calcul du flot optique Lucas-Kanade. |
-| `05_trajectory_extraction.ipynb` | Construire la trajectoire globale de l'objet. |
-| `06_speed_direction_analysis.ipynb` | Analyser la vitesse, les déplacements et la direction. |
-| `07_results_visualization.ipynb` | Visualiser les boîtes, points, vecteurs, trajectoires et sorties finales. |
+| `01_dataset_exploration.ipynb` | Explorer les images, les annotations et les fichiers d'occlusion. |
+| `02_preprocessing.ipynb` | Montrer le passage en gris, CLAHE et GaussianBlur. |
+| `03_segmentation_detection.ipynb` | Segmenter la voiture dans une ROI manuelle et detecter les points. |
+| `04_lucas_kanade_motion_field.ipynb` | Estimer le champ de mouvement sparse avec Lucas-Kanade. |
+| `05_trajectory_extraction.ipynb` | Suivre les points, filtrer les aberrations et extraire la trajectoire. |
+| `06_speed_direction_analysis.ipynb` | Calculer vitesse et direction a partir de la trajectoire. |
+| `07_final_visualization.ipynb` | Rassembler les resultats finaux pour la presentation. |
 
-## Lancer le projet étape par étape
-
-1. Créer un environnement virtuel :
-
-```bash
-python -m venv .venv
-```
-
-2. Activer l'environnement :
-
-```bash
-.venv\Scripts\activate
-```
-
-3. Installer les dépendances :
+## Installation
 
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Lancer Jupyter :
+## Execution des notebooks
 
 ```bash
 jupyter notebook
 ```
 
-5. Ouvrir les notebooks dans l'ordre, en commençant par :
+Ouvrir les notebooks dans l'ordre, de `01_dataset_exploration.ipynb` a `07_final_visualization.ipynb`.
 
-```text
-notebooks/01_dataset_exploration.ipynb
-```
-
-## État actuel
-
-La structure du projet est prête. Les notebooks et les modules Python contiennent seulement des squelettes de départ. Les algorithmes seront ajoutés progressivement dans les prochaines étapes.
-
-## Interface Tkinter
-
-Pour lancer l'interface :
+## Lancement de l'interface Tkinter
 
 ```bash
 python app/tkinter_app.py
 ```
 
-Utilisation :
+L'interface est organisee selon les trois objectifs :
 
-1. Entrer la frame de départ.
-2. Entrer la frame de fin.
-3. Cliquer sur "Lancer le tracking".
-4. Consulter la trajectoire, les statistiques, la vitesse et la direction.
+- champ de mouvement ;
+- trajectoire globale ;
+- vitesse et direction.
+
+## Resultats generes
+
+Les notebooks sauvegardent les sorties dans `results/` :
+
+```text
+results/trajectory_estimated.csv
+results/motion_analysis_estimated.csv
+results/plots/trajectory_2d.png
+results/plots/speed_curve.png
+results/plots/direction_curve.png
+results/plots/comparison_groundtruth.png
+results/frames_output/points_detected.png
+results/frames_output/segmentation_comparison.png
+results/frames_output/motion_field_frame.png
+results/frames_output/trajectory_on_frame.png
+```
+
+## Limites
+
+La solution reste volontairement pedagogique. Elle ne fait pas d'homographie, pas de stabilisation de camera, pas de deep learning et pas de tracker complexe. Les resultats peuvent etre sensibles a la ROI initiale, a l'illumination, aux occultations et aux grands deplacements.
+
+## Conclusion
+
+Nous avons utilise Lucas-Kanade pour estimer le deplacement des points caracteristiques de la voiture. Les vecteurs obtenus forment un champ de mouvement sparse.
+
+Nous avons calcule le centre robuste de l'objet a chaque frame a partir des points suivis. La succession de ces centres represente la trajectoire globale de la voiture.
+
+Nous avons calcule `dx`, `dy`, la distance, la vitesse apparente en pixels/frame et la direction avec `atan2`.
