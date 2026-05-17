@@ -1,7 +1,7 @@
-"""Pipeline simple de tracking avec Lucas-Kanade.
+"""Pipeline simple de tracking par segmentation et Lucas-Kanade.
 
-Ce fichier ne dépend pas des notebooks. Il permet de lancer le tracking sur un
-intervalle de frames et de récupérer la trajectoire, l'analyse et un résumé.
+Le groundtruth n'est pas utilise pour detecter ou suivre la voiture. Il peut
+seulement servir a comparer la trajectoire estimee a la fin.
 """
 
 from pathlib import Path
@@ -10,16 +10,28 @@ import cv2
 import numpy as np
 import pandas as pd
 
+from src.detection import (
+    clean_mask,
+    compare_masks,
+    detect_canny,
+    detect_features_in_mask,
+    preprocess_roi,
+    read_groundtruth,
+    segment_adaptive,
+    segment_otsu,
+)
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATASET_PATH = PROJECT_ROOT / "data" / "car" / "car-11"
 IMG_PATH = DATASET_PATH / "img"
 GROUNDTRUTH_PATH = DATASET_PATH / "groundtruth.txt"
 RESULTS_PATH = PROJECT_ROOT / "results"
+MANUAL_BBOX = (535, 295, 220, 110)
 
 
 def _get_image_files(img_path):
-    """Récupérer les images triées."""
+    """Recuperer les images triees."""
     image_extensions = [".jpg", ".jpeg", ".png"]
 
     if not img_path.exists():
@@ -31,57 +43,13 @@ def _get_image_files(img_path):
     ])
 
 
-def _read_groundtruth(groundtruth_path):
-    """Lire le fichier groundtruth."""
-    if not groundtruth_path.exists() or groundtruth_path.stat().st_size == 0:
-        raise ValueError("Le fichier groundtruth.txt est introuvable ou vide.")
-
-    groundtruth_df = pd.read_csv(
-        groundtruth_path,
-        header=None,
-        sep=r"[,\s]+",
-        engine="python",
-    )
-    groundtruth_df = groundtruth_df.iloc[:, :4]
-    groundtruth_df.columns = ["x", "y", "w", "h"]
-    groundtruth_df = groundtruth_df.astype(int)
-
-    return groundtruth_df
-
-
 def _preprocess_image(image_bgr):
-    """Prétraiter une image pour Lucas-Kanade."""
+    """Pretraiter une image pour Lucas-Kanade."""
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
     blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
     return blurred
-
-
-def _detect_points_in_bbox(gray_image, bbox):
-    """Détecter des points caractéristiques dans une bounding box."""
-    x, y, w, h = [int(value) for value in bbox]
-    roi_gray = gray_image[y:y + h, x:x + w]
-
-    if roi_gray.size == 0:
-        return None
-
-    points = cv2.goodFeaturesToTrack(
-        roi_gray,
-        maxCorners=80,
-        qualityLevel=0.01,
-        minDistance=7,
-        blockSize=7,
-    )
-
-    if points is None:
-        return None
-
-    points = points.astype(np.float32)
-    points[:, 0, 0] += x
-    points[:, 0, 1] += y
-
-    return points
 
 
 def _compute_center(points):
@@ -96,38 +64,152 @@ def _compute_center(points):
     return center_x, center_y
 
 
-def _bbox_center(bbox):
-    """Calculer le centre d'une bounding box."""
+def _clip_bbox(bbox, image_shape):
+    """Limiter une bbox aux dimensions de l'image."""
     x, y, w, h = [int(value) for value in bbox]
-    return x + w / 2, y + h / 2
+    height, width = image_shape[:2]
+
+    x = max(0, min(x, width - 1))
+    y = max(0, min(y, height - 1))
+    w = max(1, min(w, width - x))
+    h = max(1, min(h, height - y))
+
+    return x, y, w, h
+
+
+def _bbox_around_center(center, image_shape, base_size):
+    """Creer une petite ROI autour de la derniere position estimee."""
+    width, height = base_size
+    cx, cy = center
+    search_w = int(width * 1.25)
+    search_h = int(height * 1.25)
+    x = int(cx - search_w / 2)
+    y = int(cy - search_h / 2)
+
+    return _clip_bbox((x, y, search_w, search_h), image_shape)
+
+
+def _detect_points_by_segmentation(image_bgr, bbox):
+    """Segmenter une ROI et detecter les points dans le meilleur masque."""
+    bbox = _clip_bbox(bbox, image_bgr.shape)
+    x, y, w, h = bbox
+    roi_bgr = image_bgr[y:y + h, x:x + w]
+    gray_roi = preprocess_roi(roi_bgr)
+
+    if gray_roi is None:
+        return None, None, None, None, None
+
+    mask_otsu = segment_otsu(gray_roi)
+    mask_adaptive = segment_adaptive(gray_roi, block_size=31, C=5)
+    mask_otsu_clean = clean_mask(mask_otsu)
+    mask_adaptive_clean = clean_mask(mask_adaptive)
+
+    points_otsu = detect_features_in_mask(gray_roi, mask_otsu_clean)
+    points_adaptive = detect_features_in_mask(gray_roi, mask_adaptive_clean)
+    best_method = compare_masks(
+        mask_otsu_clean,
+        mask_adaptive_clean,
+        points_otsu,
+        points_adaptive,
+    )
+
+    if best_method == "Adaptive":
+        best_mask = mask_adaptive_clean
+        best_points = points_adaptive
+    else:
+        best_mask = mask_otsu_clean
+        best_points = points_otsu
+
+    if best_points is None or len(best_points) == 0:
+        return None, best_mask, best_method, gray_roi, bbox
+
+    global_points = best_points.copy().astype(np.float32)
+    global_points[:, 0, 0] += x
+    global_points[:, 0, 1] += y
+
+    return global_points, best_mask, best_method, gray_roi, bbox
+
+
+def _save_initialization_outputs(image_bgr, bbox, mask, points, method_name):
+    """Sauvegarder les resultats principaux de l'initialisation."""
+    RESULTS_PATH.mkdir(parents=True, exist_ok=True)
+
+    if mask is not None:
+        cv2.imwrite(str(RESULTS_PATH / "initial_best_mask.png"), mask)
+        edges = detect_canny(mask, 50, 150)
+        cv2.imwrite(str(RESULTS_PATH / "initial_canny_edges.png"), edges)
+
+    if image_bgr is not None and points is not None:
+        output = image_bgr.copy()
+        for point in np.asarray(points).reshape(-1, 2):
+            px, py = point.astype(int)
+            cv2.circle(output, (px, py), 3, (0, 0, 255), -1)
+        cv2.imwrite(str(RESULTS_PATH / "initial_points.png"), output)
+
+    if mask is not None and points is not None:
+        np.savez(
+            RESULTS_PATH / "initialization_data.npz",
+            manual_bbox=np.asarray(bbox, dtype=np.int32),
+            best_mask=mask,
+            best_points=points,
+            best_method_name=np.asarray(method_name),
+        )
 
 
 def _validate_frames(start_frame, end_frame, total_images):
-    """Vérifier que l'intervalle de frames est valide."""
+    """Verifier que l'intervalle de frames est valide."""
     if start_frame < 0:
-        raise ValueError("La frame de départ doit être supérieure ou égale à 0.")
+        raise ValueError("La frame de depart doit etre superieure ou egale a 0.")
 
     if end_frame <= start_frame:
-        raise ValueError("La frame de fin doit être supérieure à la frame de départ.")
+        raise ValueError("La frame de fin doit etre superieure a la frame de depart.")
 
     if end_frame > total_images:
-        raise ValueError("La frame de fin dépasse le nombre total d'images.")
+        raise ValueError("La frame de fin depasse le nombre total d'images.")
 
 
-def run_tracking(start_frame=0, end_frame=100, fps=30):
+def _compare_with_groundtruth(trajectory_df):
+    """Comparer la trajectoire estimee avec le groundtruth, a la fin seulement."""
+    groundtruth_df = read_groundtruth(GROUNDTRUTH_PATH)
+
+    if groundtruth_df.empty or trajectory_df.empty:
+        return pd.DataFrame()
+
+    rows = []
+    for _, row in trajectory_df.iterrows():
+        frame_index = int(row["frame"])
+        if frame_index >= len(groundtruth_df):
+            continue
+
+        gt_x, gt_y, gt_w, gt_h = groundtruth_df.iloc[frame_index]
+        gt_center_x = float(gt_x + gt_w / 2)
+        gt_center_y = float(gt_y + gt_h / 2)
+        error = float(np.sqrt((row["x"] - gt_center_x) ** 2 + (row["y"] - gt_center_y) ** 2))
+
+        rows.append({
+            "frame": frame_index,
+            "estimated_x": float(row["x"]),
+            "estimated_y": float(row["y"]),
+            "groundtruth_x": gt_center_x,
+            "groundtruth_y": gt_center_y,
+            "error": error,
+        })
+
+    comparison_df = pd.DataFrame(rows)
+
+    if not comparison_df.empty:
+        comparison_df.to_csv(RESULTS_PATH / "trajectory_comparison.csv", index=False)
+
+    return comparison_df
+
+
+def run_tracking(start_frame=0, end_frame=100, fps=30, manual_bbox=MANUAL_BBOX):
     """
-    Lance le pipeline complet de tracking sur un intervalle de frames.
+    Lancer le tracking par segmentation + Lucas-Kanade.
 
-    Entrées :
-    - start_frame : indice de la frame de départ
-    - end_frame : indice de la frame de fin
-    - fps : nombre de frames par seconde utilisé pour calculer la vitesse
-
-    Sorties :
-    - trajectory_df : DataFrame contenant frame, x, y, tracked_points
-    - analysis_df : DataFrame contenant frame, x, y, dx, dy, distance,
-      speed_px_per_frame, speed_px_per_second, direction_deg
-    - summary : dictionnaire contenant un résumé numérique du mouvement
+    Le groundtruth n'est pas utilise pour initialiser les points ni pour les
+    reinitialiser. Il est seulement lu a la fin pour calculer une erreur de
+    comparaison si le fichier existe.
     """
     start_frame = int(start_frame)
     end_frame = int(end_frame)
@@ -136,39 +218,33 @@ def run_tracking(start_frame=0, end_frame=100, fps=30):
     image_files = _get_image_files(IMG_PATH)
 
     if len(image_files) == 0:
-        raise ValueError("Aucune image n'a été trouvée dans data/car/car-11/img.")
+        raise ValueError("Aucune image n'a ete trouvee dans data/car/car-11/img.")
 
     _validate_frames(start_frame, end_frame, len(image_files))
-
-    groundtruth_df = _read_groundtruth(GROUNDTRUTH_PATH)
-
-    if end_frame > len(groundtruth_df):
-        raise ValueError("Le fichier groundtruth ne contient pas assez de lignes.")
-
     RESULTS_PATH.mkdir(parents=True, exist_ok=True)
 
     first_image = cv2.imread(str(image_files[start_frame]))
 
     if first_image is None:
-        raise ValueError("La frame de départ n'a pas pu être chargée.")
+        raise ValueError("La frame de depart n'a pas pu etre chargee.")
 
-    initial_bbox = tuple(groundtruth_df.iloc[start_frame].astype(int))
-    prev_gray = _preprocess_image(first_image)
-    points = _detect_points_in_bbox(prev_gray, initial_bbox)
+    points, best_mask, best_method, _, used_bbox = _detect_points_by_segmentation(
+        first_image,
+        manual_bbox,
+    )
 
     if points is None or len(points) == 0:
-        raise ValueError("Aucun point caractéristique n'a été détecté dans l'objet.")
+        raise ValueError("Aucun point caracteristique n'a ete detecte par segmentation.")
+
+    _save_initialization_outputs(first_image, used_bbox, best_mask, points, best_method)
 
     trajectory = []
     trajectory_frames = []
     tracked_points_count = []
+    prev_gray = _preprocess_image(first_image)
+    center = _compute_center(points)
 
-    initial_center = _compute_center(points)
-
-    if initial_center is None:
-        initial_center = _bbox_center(initial_bbox)
-
-    trajectory.append(initial_center)
+    trajectory.append(center)
     trajectory_frames.append(start_frame)
     tracked_points_count.append(len(points))
 
@@ -178,6 +254,8 @@ def run_tracking(start_frame=0, end_frame=100, fps=30):
         criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03),
     )
 
+    base_size = (used_bbox[2], used_bbox[3])
+
     for frame_index in range(start_frame + 1, end_frame):
         current_image = cv2.imread(str(image_files[frame_index]))
 
@@ -185,7 +263,6 @@ def run_tracking(start_frame=0, end_frame=100, fps=30):
             break
 
         current_gray = _preprocess_image(current_image)
-
         new_points, status, _ = cv2.calcOpticalFlowPyrLK(
             prev_gray,
             current_gray,
@@ -204,10 +281,8 @@ def run_tracking(start_frame=0, end_frame=100, fps=30):
             points = good_points.reshape(-1, 1, 2).astype(np.float32)
             tracked_count = len(points)
         else:
-            # Cette réinitialisation évite la perte complète du suivi.
-            current_bbox = tuple(groundtruth_df.iloc[frame_index].astype(int))
-            points = _detect_points_in_bbox(current_gray, current_bbox)
-            center = _bbox_center(current_bbox)
+            search_bbox = _bbox_around_center(center, current_image.shape, base_size)
+            points, _, _, _, _ = _detect_points_by_segmentation(current_image, search_bbox)
             tracked_count = 0 if points is None else len(points)
 
             if points is None or len(points) < 5:
@@ -215,6 +290,8 @@ def run_tracking(start_frame=0, end_frame=100, fps=30):
                 trajectory_frames.append(frame_index)
                 tracked_points_count.append(tracked_count)
                 break
+
+            center = _compute_center(points)
 
         trajectory.append(center)
         trajectory_frames.append(frame_index)
@@ -240,25 +317,26 @@ def run_tracking(start_frame=0, end_frame=100, fps=30):
         np.arctan2(analysis_df["dy"], analysis_df["dx"])
     )
 
-    trajectory_df.to_csv(RESULTS_PATH / "trajectory.csv", index=False)
-    analysis_df.to_csv(RESULTS_PATH / "motion_analysis.csv", index=False)
+    trajectory_df.to_csv(RESULTS_PATH / "trajectory_estimated.csv", index=False)
+    analysis_df.to_csv(RESULTS_PATH / "motion_analysis_estimated.csv", index=False)
+    comparison_df = _compare_with_groundtruth(trajectory_df)
 
     total_dx = float(analysis_df["dx"].sum())
     total_dy = float(analysis_df["dy"].sum())
 
     if total_dx > 0:
-        horizontal_text = "L'objet se déplace globalement vers la droite."
+        horizontal_text = "L'objet se deplace globalement vers la droite."
     elif total_dx < 0:
-        horizontal_text = "L'objet se déplace globalement vers la gauche."
+        horizontal_text = "L'objet se deplace globalement vers la gauche."
     else:
-        horizontal_text = "Le déplacement horizontal est faible."
+        horizontal_text = "Le deplacement horizontal est faible."
 
     if total_dy > 0:
         vertical_text = "L'objet descend dans l'image."
     elif total_dy < 0:
         vertical_text = "L'objet monte dans l'image."
     else:
-        vertical_text = "Le déplacement vertical est faible."
+        vertical_text = "Le deplacement vertical est faible."
 
     direction_values = analysis_df["direction_deg"].iloc[1:]
 
@@ -271,6 +349,12 @@ def run_tracking(start_frame=0, end_frame=100, fps=30):
         "total_dx": total_dx,
         "total_dy": total_dy,
         "movement_text": horizontal_text + " " + vertical_text,
+        "tracking_method": "segmentation + Lucas-Kanade",
+        "initial_segmentation_method": best_method,
+        "groundtruth_usage": "comparaison seulement",
+        "mean_tracking_error": (
+            float(comparison_df["error"].mean()) if not comparison_df.empty else None
+        ),
     }
 
     return trajectory_df, analysis_df, summary
