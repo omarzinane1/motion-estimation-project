@@ -3,5 +3,5 @@ __pycache__/
 *.pyc
 results/frames_output/*
 results/videos/*
-data
+data/
 .env

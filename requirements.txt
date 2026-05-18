@@ -1,6 +1,6 @@
-numpy
 opencv-python
-matplotlib
+numpy
 pandas
+matplotlib
 jupyter
 pillow
