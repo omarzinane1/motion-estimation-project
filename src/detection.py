@@ -1,86 +1,54 @@
-"""Fonctions simples pour initialiser l'objet à suivre.
-
-Ce module lit les annotations, extrait la région d'intérêt de l'objet et détecte
-des points caractéristiques dans cette région.
-"""
-
-from pathlib import Path
-
 import cv2
 import numpy as np
-import pandas as pd
 
 
-def read_groundtruth(groundtruth_path):
-    """Lire le fichier groundtruth et retourner x, y, w, h."""
-    groundtruth_path = Path(groundtruth_path)
-
-    if not groundtruth_path.exists() or groundtruth_path.stat().st_size == 0:
-        return pd.DataFrame(columns=["x", "y", "w", "h"])
-
-    groundtruth_df = pd.read_csv(
-        groundtruth_path,
-        header=None,
-        sep=r"[,\s]+",
-        engine="python",
-    )
-    groundtruth_df = groundtruth_df.iloc[:, :4]
-    groundtruth_df.columns = ["x", "y", "w", "h"]
-    groundtruth_df = groundtruth_df.astype(int)
-
-    return groundtruth_df
+def detect_edges_canny(gray, threshold1=50, threshold2=150):
+    """Detecte les contours avec Canny."""
+    if gray.ndim != 2:
+        raise ValueError("Canny attend une image en niveaux de gris.")
+    return cv2.Canny(gray, threshold1=threshold1, threshold2=threshold2)
 
 
-def get_initial_bbox(groundtruth_df):
-    """Retourner la première bounding box sous forme (x, y, w, h)."""
-    if groundtruth_df.empty:
-        return None
-
-    x, y, w, h = groundtruth_df.iloc[0]
-    return int(x), int(y), int(w), int(h)
-
-
-def extract_roi(image, bbox):
-    """Extraire la région d'intérêt correspondant à la bounding box."""
-    if bbox is None:
-        return None
-
-    x, y, w, h = bbox
-    roi = image[y:y + h, x:x + w]
-    return roi
-
-
-def detect_features_in_roi(
-    gray_image,
-    bbox,
-    max_corners=80,
-    quality_level=0.01,
-    min_distance=7,
-    block_size=7,
+def detect_good_features(
+    gray,
+    mask,
+    maxCorners=80,
+    qualityLevel=0.01,
+    minDistance=7,
+    blockSize=7,
 ):
-    """Détecter des points dans la ROI et retourner les coordonnées globales."""
-    if bbox is None:
-        return None
-
-    x, y, w, h = bbox
-    roi_gray = gray_image[y:y + h, x:x + w]
-
-    if roi_gray.size == 0:
-        return None
+    """Detecte des points caracteristiques avec Shi-Tomasi."""
+    if gray.ndim != 2:
+        raise ValueError("goodFeaturesToTrack attend une image en niveaux de gris.")
+    if mask is not None and mask.dtype != np.uint8:
+        mask = mask.astype(np.uint8)
 
     points = cv2.goodFeaturesToTrack(
-        roi_gray,
-        maxCorners=max_corners,
-        qualityLevel=quality_level,
-        minDistance=min_distance,
-        blockSize=block_size,
+        gray,
+        maxCorners=maxCorners,
+        qualityLevel=qualityLevel,
+        minDistance=minDistance,
+        mask=mask,
+        blockSize=blockSize,
     )
-
     if points is None:
-        return None
+        return np.empty((0, 1, 2), dtype=np.float32)
+    return points.astype(np.float32)
 
-    points = points.astype(np.float32)
-    points[:, 0, 0] += x
-    points[:, 0, 1] += y
 
-    return points
+def filter_points_inside_mask(points, mask):
+    """Garde uniquement les points situes dans une zone blanche du masque."""
+    if points is None or len(points) == 0:
+        return np.empty((0, 1, 2), dtype=np.float32)
+
+    pts = np.asarray(points, dtype=np.float32).reshape(-1, 2)
+    height, width = mask.shape[:2]
+    keep = []
+    for x, y in pts:
+        xi = int(round(x))
+        yi = int(round(y))
+        inside = 0 <= xi < width and 0 <= yi < height and mask[yi, xi] > 0
+        keep.append(inside)
+    keep = np.array(keep, dtype=bool)
+    return pts[keep].reshape(-1, 1, 2).astype(np.float32)
+

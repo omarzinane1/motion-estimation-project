@@ -1,172 +1,171 @@
-"""Fonctions simples de visualisation des résultats.
-
-Les images manipulées par OpenCV sont en BGR. Pour l'affichage avec Matplotlib,
-il faut convertir les images en RGB dans les notebooks.
-"""
-
 from pathlib import Path
 
 import cv2
+import matplotlib.pyplot as plt
 import numpy as np
 
 
-def draw_bbox(image, bbox):
-    """Dessiner une bounding box sur une image."""
-    if image is None:
-        return None
+def _ensure_parent(save_path):
+    if save_path is not None:
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
 
-    output = image.copy()
 
-    if bbox is None:
-        return output
+def _to_rgb(frame):
+    if frame.ndim == 2:
+        return frame
+    return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    x, y, w, h = [int(value) for value in bbox]
-    cv2.rectangle(output, (x, y), (x + w, y + h), (0, 255, 0), 2)
 
+def show_frames_grid(frames, titles=None):
+    """Affiche une grille simple de frames."""
+    n = len(frames)
+    if n == 0:
+        raise ValueError("Aucune frame a afficher.")
+
+    cols = min(4, n)
+    rows = int(np.ceil(n / cols))
+    fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 3 * rows))
+    axes = np.array(axes).reshape(-1)
+
+    for i, ax in enumerate(axes):
+        if i < n:
+            ax.imshow(_to_rgb(frames[i]), cmap="gray" if frames[i].ndim == 2 else None)
+            if titles:
+                ax.set_title(titles[i])
+        ax.axis("off")
+    plt.tight_layout()
+    return fig
+
+
+def draw_bbox(frame, bbox, color=(0, 255, 0), thickness=2):
+    """Dessine une boite englobante x,y,w,h."""
+    output = frame.copy()
+    x, y, w, h = [int(v) for v in bbox]
+    cv2.rectangle(output, (x, y), (x + w, y + h), color, thickness)
     return output
 
 
-def draw_points(image, points):
-    """Dessiner des points sur une image."""
-    if image is None:
-        return None
-
-    output = image.copy()
-
-    if points is None or len(points) == 0:
+def draw_points(frame, points, color=(0, 255, 0), radius=4):
+    """Dessine des points sur une copie de la frame."""
+    output = frame.copy()
+    if points is None:
         return output
-
-    points_array = np.asarray(points).reshape(-1, 2)
-
-    for point in points_array:
-        x, y = point.astype(int)
-        cv2.circle(output, (x, y), 3, (0, 0, 255), -1)
-
+    for x, y in np.asarray(points, dtype=np.float32).reshape(-1, 2):
+        cv2.circle(output, (int(round(x)), int(round(y))), radius, color, -1)
     return output
 
 
-def draw_motion_vectors(image, old_points, new_points):
-    """Dessiner les vecteurs de mouvement entre deux ensembles de points."""
-    if image is None:
-        return None
-
-    output = image.copy()
-
-    if old_points is None or new_points is None:
-        return output
-
-    old_points = np.asarray(old_points).reshape(-1, 2)
-    new_points = np.asarray(new_points).reshape(-1, 2)
-
-    for old_point, new_point in zip(old_points, new_points):
-        old_x, old_y = old_point.astype(int)
-        new_x, new_y = new_point.astype(int)
-        cv2.line(output, (old_x, old_y), (new_x, new_y), (255, 0, 0), 2)
-        cv2.circle(output, (old_x, old_y), 3, (0, 255, 0), -1)
-        cv2.circle(output, (new_x, new_y), 3, (0, 0, 255), -1)
-
+def draw_motion_field(frame, points_old, points_new):
+    """Dessine un champ de mouvement sparse."""
+    output = frame.copy()
+    old = np.asarray(points_old, dtype=np.float32).reshape(-1, 2)
+    new = np.asarray(points_new, dtype=np.float32).reshape(-1, 2)
+    for (x0, y0), (x1, y1) in zip(old, new):
+        cv2.arrowedLine(
+            output,
+            (int(round(x0)), int(round(y0))),
+            (int(round(x1)), int(round(y1))),
+            (0, 0, 255),
+            2,
+            tipLength=0.35,
+        )
+        cv2.circle(output, (int(round(x0)), int(round(y0))), 3, (0, 255, 0), -1)
+        cv2.circle(output, (int(round(x1)), int(round(y1))), 3, (255, 0, 0), -1)
     return output
 
 
-def draw_trajectory(image, trajectory):
-    """Dessiner la trajectoire sur une image."""
-    if image is None:
-        return None
+def plot_trajectory(trajectory_df, save_path=None):
+    """Trace la trajectoire 2D estimee."""
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(trajectory_df["center_x"], trajectory_df["center_y"], color="red", linewidth=2)
+    ax.scatter(trajectory_df["center_x"].iloc[0], trajectory_df["center_y"].iloc[0], color="green", label="Start")
+    ax.scatter(
+        trajectory_df["center_x"].iloc[-1],
+        trajectory_df["center_y"].iloc[-1],
+        color="blue",
+        label="End",
+    )
+    ax.set_title("Trajectoire globale estimee")
+    ax.set_xlabel("x (pixels)")
+    ax.set_ylabel("y (pixels)")
+    ax.invert_yaxis()
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    _ensure_parent(save_path)
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    return fig
 
-    output = image.copy()
 
-    if trajectory is None or len(trajectory) == 0:
-        return output
+def plot_trajectory_on_frame(frame, trajectory_df, save_path=None):
+    """Dessine la trajectoire sur une frame."""
+    output = frame.copy()
+    points = trajectory_df[["center_x", "center_y"]].dropna().to_numpy(dtype=np.int32)
 
-    trajectory_points = np.asarray(trajectory).reshape(-1, 2).astype(int)
+    if len(points) >= 2:
+        cv2.polylines(output, [points.reshape(-1, 1, 2)], False, (0, 0, 255), 2)
 
-    for index, point in enumerate(trajectory_points):
-        x, y = point
-        cv2.circle(output, (x, y), 3, (0, 0, 255), -1)
+    if len(points) > 0:
+        start = tuple(points[0])
+        current = tuple(points[len(points) // 2])
+        end = tuple(points[-1])
+        cv2.circle(output, start, 7, (0, 255, 0), -1)
+        cv2.circle(output, current, 7, (0, 255, 255), -1)
+        cv2.circle(output, end, 7, (255, 0, 0), -1)
+        cv2.putText(output, "Start", (start[0] + 8, start[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        cv2.putText(output, "Current", (current[0] + 8, current[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+        cv2.putText(output, "End", (end[0] + 8, end[1] - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-        if index > 0:
-            prev_x, prev_y = trajectory_points[index - 1]
-            cv2.line(output, (prev_x, prev_y), (x, y), (255, 0, 0), 2)
-
+    _ensure_parent(save_path)
+    if save_path is not None:
+        cv2.imwrite(str(save_path), output)
     return output
 
 
-def draw_current_center(image, center):
-    """Dessiner le centre actuel de l'objet."""
-    if image is None:
-        return None
-
-    output = image.copy()
-
-    if center is None:
-        return output
-
-    x, y = [int(value) for value in center]
-    cv2.circle(output, (x, y), 6, (0, 255, 255), -1)
-
-    return output
-
-
-def save_frame(image, output_path):
-    """Sauvegarder une frame."""
-    if image is None:
-        return False
-
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    return cv2.imwrite(str(output_path), image)
+def plot_speed(motion_df, save_path=None):
+    """Trace la vitesse apparente en pixels/frame."""
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(motion_df["frame_id"], motion_df["speed_px_frame"], color="tab:orange")
+    ax.set_title("Vitesse apparente")
+    ax.set_xlabel("Frame")
+    ax.set_ylabel("pixels/frame")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    _ensure_parent(save_path)
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    return fig
 
 
-def create_tracking_video(image_files, trajectory_df, output_path, fps=20):
-    """Créer une vidéo simple avec la trajectoire progressive."""
-    if image_files is None or len(image_files) == 0:
-        return False
+def plot_direction(motion_df, save_path=None):
+    """Trace la direction du mouvement en degres."""
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.plot(motion_df["frame_id"], motion_df["direction_deg"], color="tab:purple")
+    ax.set_title("Direction du mouvement")
+    ax.set_xlabel("Frame")
+    ax.set_ylabel("degres")
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    _ensure_parent(save_path)
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    return fig
 
-    if trajectory_df is None or len(trajectory_df) == 0:
-        return False
 
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    first_frame = None
-    for image_file in image_files:
-        first_frame = cv2.imread(str(image_file))
-        if first_frame is not None:
-            break
-
-    if first_frame is None:
-        return False
-
-    height, width = first_frame.shape[:2]
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    writer = cv2.VideoWriter(str(output_path), fourcc, fps, (width, height))
-
-    if not writer.isOpened():
-        return False
-
-    trajectory = []
-    written_frames = 0
-
-    for _, row in trajectory_df.iterrows():
-        frame_index = int(row["frame"]) if "frame" in trajectory_df.columns else written_frames
-
-        if frame_index < 0 or frame_index >= len(image_files):
-            continue
-
-        image = cv2.imread(str(image_files[frame_index]))
-
-        if image is None:
-            continue
-
-        center = (float(row["x"]), float(row["y"]))
-        trajectory.append(center)
-
-        output = draw_trajectory(image, trajectory)
-        output = draw_current_center(output, center)
-        writer.write(output)
-        written_frames += 1
-
-    writer.release()
-
-    return written_frames > 0
+def plot_comparison_with_groundtruth(estimated_df, gt_df, save_path=None):
+    """Trace la trajectoire estimee et la trajectoire groundtruth."""
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(estimated_df["center_x"], estimated_df["center_y"], color="red", label="Estimee")
+    ax.plot(gt_df["center_x"], gt_df["center_y"], color="blue", linestyle="--", label="Groundtruth")
+    ax.set_title("Comparaison trajectoire estimee / groundtruth")
+    ax.set_xlabel("x (pixels)")
+    ax.set_ylabel("y (pixels)")
+    ax.invert_yaxis()
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.tight_layout()
+    _ensure_parent(save_path)
+    if save_path is not None:
+        fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    return fig

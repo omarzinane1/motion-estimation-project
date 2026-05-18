@@ -1,7 +1,7 @@
 __pycache__/
-.ipynb_checkpoints/
 *.pyc
-results/frames_output/*
-results/videos/*
-data
+.ipynb_checkpoints/
 .env
+.DS_Store
+results/videos/*.mp4
+data/

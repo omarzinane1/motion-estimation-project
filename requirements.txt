@@ -1,6 +1,7 @@
-numpy
 opencv-python
-matplotlib
+numpy
 pandas
+matplotlib
 jupyter
+notebook
 pillow
