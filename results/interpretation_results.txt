@@ -1,7 +1,7 @@
 Resultats et interpretation du suivi sans groundtruth
 
 Chargement des frames
-- Le suivi a ete realise sur 120 frames de la sequence voiture.
+- Le suivi a ete realise sur 100 frames de la sequence voiture.
 - Les frames sont traitees dans leur ordre temporel, car le mouvement est estime entre images successives.
 
 Pretraitement et histogramme
@@ -24,21 +24,21 @@ Detection de mouvement par difference d'images
 
 Champ de mouvement Lucas-Kanade
 - Le champ de mouvement est represente par les vecteurs Lucas-Kanade calcules sur les points de la voiture.
-- Nombre moyen de points Lucas-Kanade suivis : 17.80.
+- Nombre moyen de points Lucas-Kanade suivis : 19.56.
 - Les erreurs possibles viennent de la perte de points, du faible contraste, des ombres ou de deplacements trop grands.
 
 Trajectoire globale
 - La trajectoire globale est extraite a partir des centres successifs de la bounding box estimee.
-- La trajectoire globale est principalement horizontale. Le deplacement cumule est dx=26.59 px et dy=-0.54 px, donc globalement vers la droite et vers le haut.
+- La trajectoire globale est principalement horizontale. Le deplacement cumule est dx=17.04 px et dy=1.91 px, donc globalement vers la droite et vers le bas.
 
 Vitesse
 - La vitesse est calculee par sqrt(dx^2 + dy^2) en pixels/frame.
-- Distance totale : 57.76 pixels.
+- Distance totale : 47.59 pixels.
 - Vitesse moyenne : 0.48 pixels/frame.
 - Vitesse maximale : 1.20 pixels/frame.
 
 Direction
-- La direction moyenne est -1.48 degres, calculee avec atan2(dy, dx).
+- La direction moyenne est 1.74 degres, calculee avec atan2(dy, dx).
 - L'axe y de l'image est oriente vers le bas, ce qui influence l'interpretation angulaire.
 
 Resultats generes
