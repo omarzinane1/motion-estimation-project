@@ -5,3 +5,4 @@ results/frames_output/*
 results/videos/*
 data/
 .env
+results
