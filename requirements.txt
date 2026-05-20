@@ -1,7 +1,0 @@
-opencv-python
-numpy
-pandas
-matplotlib
-jupyter
-notebook
-pillow
