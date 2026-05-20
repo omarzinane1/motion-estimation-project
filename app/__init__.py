@@ -1,2 +1,0 @@
-"""Interface Tkinter du projet."""
-
