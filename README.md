@@ -1,4 +1,4 @@
-# Motion Estimation Project
+# Motion Estimation Project 
 
 ![Python](https://img.shields.io/badge/Python-3.9%2B-blue)
 ![Computer Vision](https://img.shields.io/badge/Computer%20Vision-Motion%20Estimation-green)
